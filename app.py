@@ -6,27 +6,19 @@ import numpy as np
 from flask import Flask, render_template, request, send_from_directory
 import os
 import uuid
-import urllib.request
-
 app = Flask(__name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# --- モデルのダウンロード＆初期化 ---
-MODEL_PATH = '/tmp/face_landmarker.task'
-MODEL_URL = (
-    'https://storage.googleapis.com/mediapipe-models/'
-    'face_landmarker/face_landmarker/float16/1/face_landmarker.task'
-)
+# ビルド時にダウンロード済みのモデルを使用（render.yaml 参照）
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'face_landmarker.task')
 
 _landmarker = None
 
 def get_landmarker():
     global _landmarker
     if _landmarker is None:
-        if not os.path.exists(MODEL_PATH):
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
         base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
         options = FaceLandmarkerOptions(base_options=base_options, num_faces=1)
         _landmarker = FaceLandmarker.create_from_options(options)
