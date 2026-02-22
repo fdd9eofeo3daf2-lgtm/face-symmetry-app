@@ -1,17 +1,33 @@
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions
 import numpy as np
 from flask import Flask, render_template, request, send_from_directory
 import os
 import uuid
+import urllib.request
 
 app = Flask(__name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1)
+# --- モデルのダウンロード＆初期化 ---
+MODEL_PATH = '/tmp/face_landmarker.task'
+MODEL_URL = (
+    'https://storage.googleapis.com/mediapipe-models/'
+    'face_landmarker/face_landmarker/float16/1/face_landmarker.task'
+)
+
+def _get_landmarker():
+    if not os.path.exists(MODEL_PATH):
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+    options = FaceLandmarkerOptions(base_options=base_options, num_faces=1)
+    return FaceLandmarker.create_from_options(options)
+
+landmarker = _get_landmarker()
 
 
 def _status(penalty, crit_thresh=8):
@@ -28,8 +44,6 @@ def calculate_score(landmarks):
     details = []
 
     # --- 1. 眉・額のライン ---
-    # 左眉: 105（眉山）, 66, 107 の平均Y
-    # 右眉: 334（眉山）, 296, 336 の平均Y
     eyebrow_l_y = (landmarks[105].y + landmarks[66].y + landmarks[107].y) / 3
     eyebrow_r_y = (landmarks[334].y + landmarks[296].y + landmarks[336].y) / 3
     eyebrow_diff_pct = (abs(eyebrow_l_y - eyebrow_r_y) / face_width) * 100
@@ -46,7 +60,6 @@ def calculate_score(landmarks):
                     'reason': eyebrow_reason, 'status': _status(penalty_eyebrow)})
 
     # --- 2. 目の高さ・形状 ---
-    # 左目中心: (外33 + 内133) / 2  右目中心: (外263 + 内362) / 2
     eye_l_y = (landmarks[33].y + landmarks[133].y) / 2
     eye_r_y = (landmarks[263].y + landmarks[362].y) / 2
     eye_diff_pct = (abs(eye_l_y - eye_r_y) / face_width) * 100
@@ -63,7 +76,6 @@ def calculate_score(landmarks):
                     'reason': eye_reason, 'status': _status(penalty_eye)})
 
     # --- 3. 耳・頬の輪郭 ---
-    # 鼻中心(4)から左頬(234)・右頬(454)への距離差
     center_x = landmarks[4].x
     dist_l = abs(center_x - landmarks[234].x)
     dist_r = abs(center_x - landmarks[454].x)
@@ -81,7 +93,6 @@ def calculate_score(landmarks):
                     'reason': contour_reason, 'status': _status(penalty_contour)})
 
     # --- 4. 口元・あごのライン ---
-    # 左口角(61) vs 右口角(291) の高さ差
     mouth_diff_pct = (abs(landmarks[61].y - landmarks[291].y) / face_width) * 100
     penalty_mouth = round(max(0, (mouth_diff_pct - 1.0) * 10), 1)
 
@@ -96,13 +107,10 @@ def calculate_score(landmarks):
                     'reason': mouth_reason, 'status': _status(penalty_mouth)})
 
     # --- 5. あごの骨格・先端 ---
-    # ① あご先端(152)の横方向ズレ（鼻中心4 との差）
     chin_dev_pct = (abs(landmarks[152].x - landmarks[4].x) / face_width) * 100
-    # ② 左顎角(172)〜顎先 vs 右顎角(397)〜顎先 の距離差
     dist_l_jaw = abs(landmarks[172].y - landmarks[152].y)
     dist_r_jaw = abs(landmarks[397].y - landmarks[152].y)
     jaw_sym_pct = (abs(dist_l_jaw - dist_r_jaw) / face_width) * 100
-
     penalty_jaw = round(
         max(0, (chin_dev_pct - 1.5) * 10) + max(0, (jaw_sym_pct - 2.0) * 6), 1
     )
@@ -136,13 +144,14 @@ def index():
                                    result_img=None, error='画像を読み込めませんでした')
 
         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(rgb_img)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_img)
+        result = landmarker.detect(mp_image)
 
-        if not results.multi_face_landmarks:
+        if not result.face_landmarks:
             return render_template('index.html', score=None, details=[],
                                    result_img=None, error='顔が検出できませんでした')
 
-        landmarks = results.multi_face_landmarks[0].landmark
+        landmarks = result.face_landmarks[0]
         score, details = calculate_score(landmarks)
 
         filename = f"{uuid.uuid4().hex}.jpg"
