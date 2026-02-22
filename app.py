@@ -14,7 +14,7 @@ mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1)
 
 
-def _status(penalty, warn_thresh=3, crit_thresh=8):
+def _status(penalty, crit_thresh=8):
     if penalty == 0:
         return 'good'
     elif penalty < crit_thresh:
@@ -27,9 +27,29 @@ def calculate_score(landmarks):
     face_width = abs(landmarks[454].x - landmarks[234].x)
     details = []
 
-    # --- 1. 目の高さの左右対称 ---
-    eye_diff = abs(landmarks[33].y - landmarks[263].y)
-    eye_diff_pct = (eye_diff / face_width) * 100
+    # --- 1. 眉・額のライン ---
+    # 左眉: 105（眉山）, 66, 107 の平均Y
+    # 右眉: 334（眉山）, 296, 336 の平均Y
+    eyebrow_l_y = (landmarks[105].y + landmarks[66].y + landmarks[107].y) / 3
+    eyebrow_r_y = (landmarks[334].y + landmarks[296].y + landmarks[336].y) / 3
+    eyebrow_diff_pct = (abs(eyebrow_l_y - eyebrow_r_y) / face_width) * 100
+    penalty_eyebrow = round(max(0, (eyebrow_diff_pct - 1.0) * 12), 1)
+
+    if penalty_eyebrow == 0:
+        eyebrow_reason = f"左右の眉の高さはほぼ均等です（差 {eyebrow_diff_pct:.2f}%）"
+    elif penalty_eyebrow < 8:
+        eyebrow_reason = f"眉の高さに軽度の左右差があります（差 {eyebrow_diff_pct:.2f}%）"
+    else:
+        eyebrow_reason = f"眉の高さに顕著な左右差が検出されました（差 {eyebrow_diff_pct:.2f}%）"
+
+    details.append({'name': '眉・額のライン', 'deduction': penalty_eyebrow,
+                    'reason': eyebrow_reason, 'status': _status(penalty_eyebrow)})
+
+    # --- 2. 目の高さ・形状 ---
+    # 左目中心: (外33 + 内133) / 2  右目中心: (外263 + 内362) / 2
+    eye_l_y = (landmarks[33].y + landmarks[133].y) / 2
+    eye_r_y = (landmarks[263].y + landmarks[362].y) / 2
+    eye_diff_pct = (abs(eye_l_y - eye_r_y) / face_width) * 100
     penalty_eye = round(max(0, (eye_diff_pct - 0.4) * 15), 1)
 
     if penalty_eye == 0:
@@ -39,12 +59,30 @@ def calculate_score(landmarks):
     else:
         eye_reason = f"目の高さに顕著な左右差が検出されました（差 {eye_diff_pct:.2f}%）"
 
-    details.append({'name': '目の対称性', 'deduction': penalty_eye,
+    details.append({'name': '目の高さ・形状', 'deduction': penalty_eye,
                     'reason': eye_reason, 'status': _status(penalty_eye)})
 
-    # --- 2. 口角の高さの左右対称 ---
-    mouth_diff = abs(landmarks[61].y - landmarks[291].y)
-    mouth_diff_pct = (mouth_diff / face_width) * 100
+    # --- 3. 耳・頬の輪郭 ---
+    # 鼻中心(4)から左頬(234)・右頬(454)への距離差
+    center_x = landmarks[4].x
+    dist_l = abs(center_x - landmarks[234].x)
+    dist_r = abs(center_x - landmarks[454].x)
+    contour_diff_pct = (abs(dist_l - dist_r) / face_width) * 100
+    penalty_contour = round(max(0, (contour_diff_pct - 2.0) * 8), 1)
+
+    if penalty_contour == 0:
+        contour_reason = f"頬・耳のラインの左右バランスは良好です（差 {contour_diff_pct:.2f}%）"
+    elif penalty_contour < 8:
+        contour_reason = f"頬のラインにわずかな左右差があります（差 {contour_diff_pct:.2f}%）"
+    else:
+        contour_reason = f"頬・耳のラインに明確な左右差が見られます（差 {contour_diff_pct:.2f}%）"
+
+    details.append({'name': '耳・頬の輪郭', 'deduction': penalty_contour,
+                    'reason': contour_reason, 'status': _status(penalty_contour)})
+
+    # --- 4. 口元・あごのライン ---
+    # 左口角(61) vs 右口角(291) の高さ差
+    mouth_diff_pct = (abs(landmarks[61].y - landmarks[291].y) / face_width) * 100
     penalty_mouth = round(max(0, (mouth_diff_pct - 1.0) * 10), 1)
 
     if penalty_mouth == 0:
@@ -54,66 +92,30 @@ def calculate_score(landmarks):
     else:
         mouth_reason = f"口角に顕著な左右差が検出されました（差 {mouth_diff_pct:.2f}%）"
 
-    details.append({'name': '口角の対称性', 'deduction': penalty_mouth,
+    details.append({'name': '口元・あごのライン', 'deduction': penalty_mouth,
                     'reason': mouth_reason, 'status': _status(penalty_mouth)})
 
-    # --- 3. 顔の輪郭の左右差 ---
-    center_x = landmarks[4].x
-    dist_l = abs(center_x - landmarks[234].x)
-    dist_r = abs(center_x - landmarks[454].x)
-    contour_diff_pct = (abs(dist_l - dist_r) / face_width) * 100
-    penalty_contour = round(max(0, (contour_diff_pct - 2.0) * 8), 1)
+    # --- 5. あごの骨格・先端 ---
+    # ① あご先端(152)の横方向ズレ（鼻中心4 との差）
+    chin_dev_pct = (abs(landmarks[152].x - landmarks[4].x) / face_width) * 100
+    # ② 左顎角(172)〜顎先 vs 右顎角(397)〜顎先 の距離差
+    dist_l_jaw = abs(landmarks[172].y - landmarks[152].y)
+    dist_r_jaw = abs(landmarks[397].y - landmarks[152].y)
+    jaw_sym_pct = (abs(dist_l_jaw - dist_r_jaw) / face_width) * 100
 
-    if penalty_contour == 0:
-        contour_reason = f"顔の輪郭の左右バランスは良好です（差 {contour_diff_pct:.2f}%）"
-    elif penalty_contour < 8:
-        contour_reason = f"顔の輪郭にわずかな左右差があります（差 {contour_diff_pct:.2f}%）"
+    penalty_jaw = round(
+        max(0, (chin_dev_pct - 1.5) * 10) + max(0, (jaw_sym_pct - 2.0) * 6), 1
+    )
+
+    if penalty_jaw == 0:
+        jaw_reason = f"あごの位置・骨格は左右均等です（中心ズレ {chin_dev_pct:.2f}%）"
+    elif penalty_jaw < 8:
+        jaw_reason = f"あごにわずかな偏りが見られます（中心ズレ {chin_dev_pct:.2f}%）"
     else:
-        contour_reason = f"顔の輪郭に明確な左右差が見られます（差 {contour_diff_pct:.2f}%）"
+        jaw_reason = f"あごの位置に顕著な左右偏位が検出されました（中心ズレ {chin_dev_pct:.2f}%）"
 
-    details.append({'name': '顔輪郭の対称性', 'deduction': penalty_contour,
-                    'reason': contour_reason, 'status': _status(penalty_contour)})
-
-    # --- 4. 縦の黄金比（1:1:1）---
-    top_h = abs(landmarks[10].y - landmarks[168].y)
-    mid_h = abs(landmarks[168].y - landmarks[2].y)
-    btm_h = abs(landmarks[2].y - landmarks[152].y)
-    avg_h = (top_h + mid_h + btm_h) / 3
-
-    penalty_ratio_v = 0
-    for h in [top_h, mid_h, btm_h]:
-        diff_pct = (abs(h - avg_h) / face_width) * 100
-        if diff_pct > 3.0:
-            penalty_ratio_v += (diff_pct - 3.0) * 5
-    penalty_ratio_v = round(penalty_ratio_v, 1)
-
-    top_r = round(top_h / avg_h * 100)
-    mid_r = round(mid_h / avg_h * 100)
-    btm_r = round(btm_h / avg_h * 100)
-
-    if penalty_ratio_v == 0:
-        ratio_v_reason = f"額：中顔面：下顔面 ≈ {top_r}:{mid_r}:{btm_r} — 理想的な縦三等分です"
-    elif penalty_ratio_v < 8:
-        ratio_v_reason = f"額：中顔面：下顔面 = {top_r}:{mid_r}:{btm_r} — 縦比率にわずかなズレがあります"
-    else:
-        ratio_v_reason = f"額：中顔面：下顔面 = {top_r}:{mid_r}:{btm_r} — 縦の三等分比率から大きく外れています"
-
-    details.append({'name': '縦の黄金比（1:1:1）', 'deduction': penalty_ratio_v,
-                    'reason': ratio_v_reason, 'status': _status(penalty_ratio_v)})
-
-    # --- 5. 下顔面の黄金比（鼻下〜唇 1 : 唇〜あご 2）---
-    philtrum = abs(landmarks[2].y - landmarks[0].y)
-    chin = abs(landmarks[0].y - landmarks[152].y)
-    actual_ratio = round(chin / philtrum, 2) if philtrum > 0 else 0
-    penalty_ratio_lower = 5 if not (1.8 <= actual_ratio <= 2.2) else 0
-
-    if penalty_ratio_lower == 0:
-        ratio_lower_reason = f"鼻下〜唇：唇〜あご = 1:{actual_ratio} — 理想比率 1:2 に合致しています"
-    else:
-        ratio_lower_reason = f"鼻下〜唇：唇〜あご = 1:{actual_ratio} — 理想比率 1:2 からズレがあります"
-
-    details.append({'name': '下顔面の黄金比（1:2）', 'deduction': penalty_ratio_lower,
-                    'reason': ratio_lower_reason, 'status': _status(penalty_ratio_lower, warn_thresh=1)})
+    details.append({'name': 'あごの骨格・先端', 'deduction': penalty_jaw,
+                    'reason': jaw_reason, 'status': _status(penalty_jaw)})
 
     score = round(max(0, min(100, 100 - sum(d['deduction'] for d in details))), 1)
     return score, details
