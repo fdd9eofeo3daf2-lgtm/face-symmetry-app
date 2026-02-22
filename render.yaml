@@ -6,7 +6,7 @@ services:
       pip install -r requirements.txt &&
       python -c "
       import urllib.request, os;
-      url='https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker_lite/float16/1/face_landmarker_lite.task';
+      url='https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
       path='face_landmarker.task';
       urllib.request.urlretrieve(url, path) if not os.path.exists(path) else None;
       print('model ready:', os.path.getsize(path), 'bytes')
