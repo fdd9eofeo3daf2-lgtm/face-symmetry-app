@@ -40,6 +40,10 @@
             </div>
         </form>
 
+        {% if error %}
+            <p style="color:#ff4b2b; margin-top:1rem;">{{ error }}</p>
+        {% endif %}
+
         {% if score is not none %}
             <div class="score-box">
                 <p style="margin:0; font-size:0.9rem; color:#888;">対称性バランススコア</p>
@@ -62,7 +66,9 @@
                 {% endfor %}
             </div>
             
+            {% if result_img %}
             <img src="{{ url_for('uploaded_file', filename=result_img) }}" class="analysis-img">
+            {% endif %}
             <p style="font-size: 0.7rem; color: #555; margin-top: 15px;">※100点満点からの部位別減点方式を採用しています</p>
         {% endif %}
     </div>
