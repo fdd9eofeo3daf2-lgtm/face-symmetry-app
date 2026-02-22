@@ -20,14 +20,17 @@ MODEL_URL = (
     'face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 )
 
-def _get_landmarker():
-    if not os.path.exists(MODEL_PATH):
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-    base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = FaceLandmarkerOptions(base_options=base_options, num_faces=1)
-    return FaceLandmarker.create_from_options(options)
+_landmarker = None
 
-landmarker = _get_landmarker()
+def get_landmarker():
+    global _landmarker
+    if _landmarker is None:
+        if not os.path.exists(MODEL_PATH):
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+        options = FaceLandmarkerOptions(base_options=base_options, num_faces=1)
+        _landmarker = FaceLandmarker.create_from_options(options)
+    return _landmarker
 
 
 def _status(penalty, crit_thresh=8):
@@ -145,7 +148,7 @@ def index():
 
         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_img)
-        result = landmarker.detect(mp_image)
+        result = get_landmarker().detect(mp_image)
 
         if not result.face_landmarks:
             return render_template('index.html', score=None, details=[],
